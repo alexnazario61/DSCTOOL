@@ -1,0 +1,845 @@
+const carrierProfiles = {
+  CLARO: {
+    display: "Claro",
+    recipients: "chamado@claroatendimento.com.br",
+    actionTaken: "Aberto chamado Bdesk",
+    nextAction: "Acionar a Claro",
+    spokenWith: "Claro",
+    channel: "Email",
+    outageText: "capacidade indisponível",
+    emailIntro: "Estamos com o seguinte capacidade indisponível podem verificar com urgência?.",
+  },
+  TELY: {
+    display: "TELY",
+    recipients: "monitoramento@tely.com.br",
+    actionTaken: "Aberto chamado junto a TELY",
+    nextAction: "Cobrar a TELY em 1 hora",
+    spokenWith: "TELY",
+    channel: "Email",
+    outageText: "link indisponível",
+    emailIntro: "Estamos com o seguinte link indisponível podem verificar com urgência?",
+  },
+  TELEBRAS: {
+    display: "Telebras",
+    recipients: "",
+    actionTaken: "Aberto chamado Bdesk",
+    nextAction: "Acionar a Telebras",
+    spokenWith: "Telebras",
+    channel: "WhatsApp",
+    phoneChannel: "0800 880 7000",
+    outageText: "capacidade indisponível",
+    emailIntro: "Estamos com capacidade indisponível, podem verificar com urgência?",
+  },
+  TIM: {
+    display: "Tim",
+    recipients: "corporate@timbrasil.com.br",
+    actionTaken: "Aberto chamado junto a Tim",
+    nextAction: "Cobrar a Tim em 1 hora",
+    spokenWith: "Tim",
+    channel: "Telegram",
+    outageText: "transporte de capacidade indisponível",
+    emailIntro: "Estamos com transporte de capacidade indisponível verificar com urgência?",
+  },
+  VIVO: {
+    display: "Vivo",
+    recipients: "swap_backbone@indrabrasil.com.br; cire_backbone@indrabrasil.com.br",
+    actionTaken: "Aberto chamado junto a Vivo",
+    nextAction: "Cobrar a Vivo em 1 hora",
+    spokenWith: "Vivo",
+    channel: "Email",
+    outageText: "transporte de capacidade indisponível",
+    emailIntro: "Estamos com transporte de capacidade indisponível verificar com urgência?",
+  },
+};
+
+const descriptionData = {
+  cnl: [],
+  failureTypes: {},
+  partners: [],
+  loaded: false,
+};
+
+const fields = {};
+
+const dataUrls = {
+  cnl: "descricao-main/data/codigos-cnl.json",
+  failureTypes: "descricao-main/data/tipos-de-falhas.json",
+  partners: "descricao-main/data/parceiras.json",
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  [
+    "events",
+    "carrier",
+    "internalTicket",
+    "externalTicket",
+    "designations",
+    "bdeskTitle",
+    "origin",
+    "destination",
+    "failureTime",
+    "contact",
+    "symptom",
+    "diagnosis",
+    "facilities",
+    "actionTaken",
+    "nextAction",
+    "spokenWith",
+    "channel",
+    "forecast",
+    "phoneChannel",
+    "recipients",
+    "copyTo",
+    "greeting",
+    "outageText",
+    "requesterName",
+    "failureType",
+    "partner",
+    "fiber",
+    "descriptionMode",
+    "hostA",
+    "hostB",
+    "descriptionOutput",
+    "openingOutput",
+    "updateOutput",
+    "emailOutput",
+    "chargeOutput",
+    "status",
+  ].forEach((id) => {
+    fields[id] = document.getElementById(id);
+  });
+
+  loadDefaults();
+  applyCarrierDefaults(fields.carrier.value, true);
+  bindEvents();
+  loadDescriptionData();
+  renderOutput();
+});
+
+function bindEvents() {
+  document.getElementById("generatorForm").addEventListener("input", renderOutput);
+  fields.carrier.addEventListener("change", () => {
+    applyCarrierDefaults(fields.carrier.value, false);
+    setValue("partner", fields.carrier.value);
+    renderOutput();
+  });
+
+  document.getElementById("parseButton").addEventListener("click", () => {
+    parseEvents(true);
+    renderOutput();
+  });
+
+  document.getElementById("downloadButton").addEventListener("click", downloadOutput);
+  document.getElementById("clearButton").addEventListener("click", clearForm);
+  document.getElementById("saveDefaultsButton").addEventListener("click", saveDefaults);
+
+  document.querySelectorAll(".copy-field").forEach((button) => {
+    button.addEventListener("click", () => {
+      copyField(button.dataset.copy);
+    });
+  });
+}
+
+async function loadDescriptionData() {
+  try {
+    const [cnl, failureTypes, partners] = await Promise.all([
+      fetchJson(dataUrls.cnl),
+      fetchJson(dataUrls.failureTypes),
+      fetchJson(dataUrls.partners),
+    ]);
+
+    descriptionData.cnl = cnl;
+    descriptionData.failureTypes = failureTypes[0] || {};
+    descriptionData.partners = partners;
+    descriptionData.loaded = true;
+    fillDatalist("failureTypesList", Object.keys(descriptionData.failureTypes));
+    fillDatalist("partnersList", descriptionData.partners);
+    renderOutput();
+    setStatus("Dados de descrição carregados.");
+  } catch (error) {
+    descriptionData.failureTypes = {
+      ATENUACAO: "ATN",
+      "FALHA DE HARDWARE": "FHW",
+      "FALHA DE SOFTWARE": "FSW",
+      "FALHA NO CLIENTE": "FCL",
+      "FALHA DE ENERGIA": "FEG",
+      "FALHA DE GERENCIA": "FGR",
+      OSCILACAO: "OSC",
+      RUPTURA: "RUP",
+      SATURACAO: "SAT",
+      INDISPONIBILIDADE: "IND",
+      "TAXA DE ERRO": "TXE",
+      "TEMPERATURA ALTA": "TPA",
+      TRANSPORTE: "TRN",
+      RADIO: "RAD",
+    };
+    fillDatalist("failureTypesList", Object.keys(descriptionData.failureTypes));
+    setStatus("Abra por um servidor local para carregar CNL/parceiros automaticamente.");
+    renderOutput();
+  }
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Falha ao carregar ${url}`);
+  return response.json();
+}
+
+function fillDatalist(id, values) {
+  const datalist = document.getElementById(id);
+  datalist.innerHTML = values
+    .map((value) => `<option value="${escapeHtml(String(value).trim())}"></option>`)
+    .join("");
+}
+
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[char]);
+}
+
+function applyCarrierDefaults(carrier, initialLoad) {
+  const profile = carrierProfiles[carrier];
+  if (!profile) return;
+
+  const defaults = readDefaults();
+  setValue("recipients", profile.recipients);
+  setValue("actionTaken", profile.actionTaken);
+  setValue("nextAction", profile.nextAction);
+  setValue("spokenWith", profile.spokenWith);
+  setValue("channel", profile.channel);
+  setValue("outageText", profile.outageText);
+  setValue("phoneChannel", profile.phoneChannel || "");
+  setValue("partner", carrier);
+
+  if (!initialLoad || !fields.contact.value) {
+    setValue("contact", defaults.contact || "");
+  }
+
+  if (!initialLoad || !fields.requesterName.value) {
+    setValue("requesterName", defaults.requesterName || "");
+  }
+
+  updateGreeting();
+}
+
+function updateGreeting() {
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
+  fields.greeting.value = greeting;
+}
+
+function setValue(id, value) {
+  fields[id].value = value || "";
+}
+
+function getValue(id) {
+  return (fields[id].value || "").trim();
+}
+
+function parseEvents(showStatus) {
+  const text = getValue("events");
+  if (!text) {
+    if (showStatus) setStatus("Cole o evento antes de extrair.");
+    return;
+  }
+
+  const carrier = inferCarrier(text) || getValue("carrier");
+  fields.carrier.value = carrier;
+  applyCarrierDefaults(carrier, true);
+
+  const designations = extractDesignations(text);
+  const firstDate = extractFailureTime(text);
+  const bdesk = extractBdeskTitle(text);
+  const ticket = extractInternalTicket(text);
+  const trecho = extractRoute(text);
+  const hosts = extractHosts(text);
+  const fiber = extractFiber(text);
+  const failureType = inferFailureType(text, bdesk);
+  const routeFromHosts = extractRouteFromHosts(hosts);
+
+  if (designations.length) setValue("designations", designations.join("\n"));
+  if (firstDate) setValue("failureTime", firstDate);
+  if (bdesk) setValue("bdeskTitle", bdesk);
+  if (ticket) setValue("internalTicket", ticket);
+  if (hosts[0]) setValue("hostA", hosts[0]);
+  if (hosts[1]) setValue("hostB", hosts[1]);
+  if (trecho.origin || routeFromHosts.origin) setValue("origin", trecho.origin || routeFromHosts.origin);
+  if (trecho.destination || routeFromHosts.destination) setValue("destination", trecho.destination || routeFromHosts.destination);
+  if (fiber) setValue("fiber", fiber);
+  if (failureType) setValue("failureType", failureType);
+  setValue("partner", carrier);
+
+  if (showStatus) {
+    setStatus("Dados extraídos do evento. Revise origem, destino e designações antes de copiar.");
+  }
+}
+
+function inferCarrier(text) {
+  const upper = text.toUpperCase();
+  if (upper.includes("CAP_CLARO") || upper.includes("::CLARO")) return "CLARO";
+  if (upper.includes("CAP_TELY") || upper.includes("::TELY")) return "TELY";
+  if (upper.includes("TELEBRAS") || upper.includes("PATX")) return "TELEBRAS";
+  if (upper.includes("CAP:TIM") || upper.includes("::TIM")) return "TIM";
+  if (upper.includes("CAP:VIVO") || upper.includes("::VIVO") || upper.includes("EILD")) return "VIVO";
+  return "";
+}
+
+function extractDesignations(text) {
+  const matches = new Set();
+  const labeledLines = text.match(/(?:Designações|Designacoes|Circuito)\s*:?\s*[^\r\n]+/gi) || [];
+
+  labeledLines.forEach((line) => {
+    const value = line.replace(/^(?:Designações|Designacoes|Circuito)\s*:?\s*/i, "").trim();
+    if (value.length > 3) matches.add(value);
+  });
+
+  const patterns = [
+    /CAP[_:][A-Z0-9:_./*-]+(?:CID:\d+|ID:\d+|EILD[:\-_]?\d+|DES[:A-Z0-9/_ *.-]+|DESG[:A-Z0-9/_ *.-]+)?/gi,
+    /CAP-DESG:[A-Z0-9-]+/gi,
+    /PATX\d+/gi,
+  ];
+
+  patterns.forEach((pattern) => {
+    const found = text.match(pattern) || [];
+    found.forEach((item) => {
+      const cleaned = item.replace(/[),;]+$/g, "").trim();
+      if (cleaned.length > 5) matches.add(cleaned);
+    });
+  });
+
+  return Array.from(matches);
+}
+
+function extractFailureTime(text) {
+  const iso = text.match(/(20\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]} ${iso[4]}:${iso[5]}`;
+
+  const br = text.match(/(\d{2})[/-](\d{2})[/-](20\d{2})\s+(\d{2}):(\d{2})/);
+  if (br) return `${br[1]}/${br[2]}/${br[3]} ${br[4]}:${br[5]}`;
+
+  return "";
+}
+
+function extractBdeskTitle(text) {
+  const bdesk = text.match(/[A-Z]{2}::IND::[^\n\r]+::ONLY::[A-Z]+/i);
+  return bdesk ? bdesk[0].trim() : "";
+}
+
+function extractInternalTicket(text) {
+  const bdeskTicket = text.match(/Aut\s+Bdesk:#\s*(\d+)/i);
+  if (bdeskTicket) return bdeskTicket[1];
+
+  const looseTicket = text.match(/\b(5\d{5})\b/);
+  return looseTicket ? looseTicket[1] : "";
+}
+
+function extractHosts(text) {
+  const matches = new Set();
+  const patterns = [
+    /\bBR[.-][A-Z]{2}[.-][A-Z0-9]{3,4}[.-][A-Z0-9]{3,4}[.-][A-Z0-9]{2,3}[.-]\d{1,2}/gi,
+  ];
+
+  patterns.forEach((pattern) => {
+    const found = text.match(pattern) || [];
+    found.forEach((host) => matches.add(normalizeHost(host)));
+  });
+
+  extractCompactHosts(text).forEach((host) => matches.add(host));
+
+  return Array.from(matches).slice(0, 2);
+}
+
+function extractCompactHosts(text) {
+  const hosts = [];
+  const tokens = text.match(/\b[A-Z]{3,4}[A-Z0-9]{3,4}(?:TP|PE|CO|SW|RT|BB)\d{1,2}\b/gi) || [];
+
+  tokens.forEach((token) => {
+    const host = compactHostToFull(token);
+    if (host) hosts.push(host);
+  });
+
+  return hosts;
+}
+
+function compactHostToFull(value) {
+  const token = value.toUpperCase();
+  const types = ["TP", "PE", "CO", "SW", "RT", "BB"];
+
+  for (const siglaLength of [4, 3]) {
+    const sigla = token.slice(0, siglaLength);
+    const city = findCnlBySigla(sigla);
+    if (!city) continue;
+
+    const rest = token.slice(siglaLength);
+    for (const type of types) {
+      const typeIndex = rest.indexOf(type);
+      if (typeIndex <= 0) continue;
+
+      const pop = rest.slice(0, typeIndex);
+      const number = rest.slice(typeIndex + type.length);
+      if (!pop || !/^\d{1,2}$/.test(number)) continue;
+
+      return normalizeHost(`BR-${city.UF}-${sigla}-${pop}-${type}-${number}`);
+    }
+  }
+
+  return "";
+}
+
+function extractFiber(text) {
+  const match = text.match(/::(ONLY|WORK|PROT)::/i);
+  return match ? match[1].toUpperCase() : "";
+}
+
+function inferFailureType(text, bdeskTitle) {
+  const source = `${bdeskTitle} ${text}`.toUpperCase();
+  const codeMatch = bdeskTitle.match(/::([A-Z]{3})::/i);
+  if (codeMatch) {
+    const label = failureLabelByCode(codeMatch[1].toUpperCase());
+    if (label) return label;
+  }
+
+  if (source.includes("TEMPERATURA")) return "TEMPERATURA ALTA";
+  if (source.includes("ENERGIA")) return "FALHA DE ENERGIA";
+  if (source.includes("RUPTURA")) return "RUPTURA";
+  if (source.includes("OSCILA")) return "OSCILACAO";
+  if (source.includes("SATURA")) return "SATURACAO";
+  if (source.includes("TAXA DE ERRO")) return "TAXA DE ERRO";
+  if (source.includes("LINK DOWN") || source.includes("INDISPON")) return "INDISPONIBILIDADE";
+  return getValue("failureType") || "INDISPONIBILIDADE";
+}
+
+function failureLabelByCode(code) {
+  const entries = Object.entries(descriptionData.failureTypes);
+  const found = entries.find(([, value]) => value === code);
+  return found ? found[0] : "";
+}
+
+function extractRoute(text) {
+  const explicit = text.match(/Trecho\s*:?\s*(.+?)\s+x\s+([^\n\r]+)/i);
+  if (explicit) {
+    return {
+      origin: cleanRoutePart(explicit[1]),
+      destination: cleanRoutePart(explicit[2]),
+    };
+  }
+
+  const bdesk = extractBdeskTitle(text);
+  const route = bdesk.match(/::IND::(.+?)<>(.+?)::ONLY::/i);
+  if (!route) return {};
+
+  return {
+    origin: cleanRoutePart(route[1]),
+    destination: cleanRoutePart(route[2]),
+  };
+}
+
+function cleanRoutePart(value) {
+  return value.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeHost(value) {
+  const normalized = value.trim().toUpperCase().replace(/[._]/g, "-");
+  const match = normalized.match(/^((?:BR-)?[A-Z]{2}-[A-Z0-9]{3,4}-[A-Z0-9]{3,4}-[A-Z0-9]{2,3}-)(\d{1,2})/);
+  if (!match) return normalized;
+  return `${match[1]}${match[2].padStart(2, "0")}`;
+}
+
+function buildDescription() {
+  const failure = normalizeText(getValue("failureType")) || "INDISPONIBILIDADE";
+  const hostA = normalizeHost(getValue("hostA"));
+  const hostB = normalizeHost(getValue("hostB"));
+  const partner = normalizeText(getValue("partner") || getValue("carrier"));
+  const fiber = getValue("fiber") || "ONLY";
+  const mode = getValue("descriptionMode");
+  const failureCode = descriptionData.failureTypes[failure] || failure.slice(0, 3);
+  const isSingle = mode === "single" || (mode === "auto" && (isSinglePointFailure(failure) || !hostB));
+
+  const popA = popSearchCnl(hostA);
+  const popB = popSearchCnl(hostB);
+
+  if (!hostA && !getValue("origin")) return "";
+
+  if (isSingle) {
+    const site = popA;
+    if (failure.includes("ENERGIA")) {
+      return [
+        site.UF,
+        failureCode,
+        `${site.MUNICIPIO}_${site.POP}<>${site.UF}-${site.SIGLA}-${site.POP}`,
+        partner,
+      ].join("::");
+    }
+
+    return [
+      site.UF,
+      failureCode,
+      `${site.MUNICIPIO}_${site.POP}<>${hostA || site.HOST}`,
+      fiber,
+      partner,
+    ].join("::");
+  }
+
+  const route = [popA, popB].sort(comparePops);
+  return [
+    route[0].UF,
+    failureCode,
+    `${route[0].MUNICIPIO}_${route[0].POP}<>${route[1].MUNICIPIO}_${route[1].POP}`,
+    fiber,
+    partner,
+  ].join("::");
+}
+
+function normalizeText(value) {
+  return value.trim().toUpperCase();
+}
+
+function isSinglePointFailure(failure) {
+  return failure.includes("FALHA") || failure.includes("TEMPERATURA");
+}
+
+function popSearchCnl(host) {
+  const parts = host ? host.split("-") : [];
+  const sigla = parts[0] === "BR" ? parts[2] : parts[1];
+  const pop = parts[0] === "BR" ? parts[3] : parts[2];
+  const ufFromHost = parts[0] === "BR" ? parts[1] : parts[0];
+  const found = findCnlBySigla(sigla);
+
+  if (found) {
+    return {
+      UF: found.UF,
+      SIGLA: found.SIGLA,
+      MUNICIPIO: found.MUNICIPIO,
+      POP: pop || found.SIGLA,
+      HOST: host,
+    };
+  }
+
+  return {
+    UF: ufFromHost || extractUfFromDescription() || "",
+    SIGLA: sigla || "",
+    MUNICIPIO: fallbackMunicipio(host),
+    POP: pop || "",
+    HOST: host,
+  };
+}
+
+function findCnlBySigla(sigla) {
+  return descriptionData.cnl.find((item) => item.SIGLA === sigla);
+}
+
+function extractRouteFromHosts(hosts) {
+  if (!hosts.length) return {};
+
+  const pops = hosts
+    .map((host) => popSearchCnl(host))
+    .filter((pop) => pop.MUNICIPIO);
+
+  if (!pops.length) return {};
+
+  const route = pops.slice(0, 2).sort(comparePops);
+  return {
+    origin: route[0].MUNICIPIO,
+    destination: route[1] ? route[1].MUNICIPIO : "",
+  };
+}
+
+function comparePops(a, b) {
+  const left = `${a.MUNICIPIO}${a.POP}`;
+  const right = `${b.MUNICIPIO}${b.POP}`;
+  return left.localeCompare(right);
+}
+
+function fallbackMunicipio(host) {
+  const route = extractRouteFromFields();
+  if (!host || !route.origin) return "";
+  if (host === normalizeHost(getValue("hostB"))) return route.destination || route.origin;
+  return route.origin;
+}
+
+function extractRouteFromFields() {
+  return {
+    origin: normalizeText(getValue("origin")).replace(/_/g, " "),
+    destination: normalizeText(getValue("destination")).replace(/_/g, " "),
+  };
+}
+
+function extractUfFromDescription() {
+  const match = getValue("bdeskTitle").match(/^([A-Z]{2})::/);
+  return match ? match[1] : "";
+}
+
+function buildOpening() {
+  const lines = [
+    "### ABERTURA NOC ###",
+    "",
+    `SINTOMA/RECLAMAÇÃO: ${getValue("symptom") || "Capacidade indisponível"};`,
+    `DIAGNÓSTICO: ${getValue("diagnosis") || "Provável falha na operadora parceira"};`,
+    `FACILIDADES: ${getValue("facilities") || "Segue abaixo"};`,
+    `AÇÃO TOMADA: ${getValue("actionTaken")};`,
+    `PRÓXIMA AÇÃO: ${getValue("nextAction")};`,
+  ];
+
+  const description = getValue("bdeskTitle");
+  if (description) lines.push("", description);
+
+  return lines.join("\n");
+}
+
+function buildUpdate() {
+  const profile = carrierProfiles[getValue("carrier")];
+  const spoken = getValue("spokenWith") || profile.display;
+  const channel = getValue("channel");
+  const lines = [
+    "### ATUALIZAÇÃO NOC ###",
+    "",
+    `FALADO COM: ${spoken}${channel ? ` via ${channel}` : ""};`,
+  ];
+
+  const phoneChannel = getValue("phoneChannel");
+  if (phoneChannel) lines.push(`TELEFONE: ${phoneChannel};`);
+
+  lines.push(
+    "O QUE FOI FALADO: segue print abaixo;",
+    `PREVISÃO: ${getValue("forecast") || "Sem previsão"};`,
+    `PRÓXIMA AÇÃO: Cobrar ${profile.display} em 1 hora;`,
+  );
+
+  return lines.join("\n");
+}
+
+function buildEmail() {
+  const carrier = getValue("carrier");
+  if (carrier === "TELEBRAS") return buildTelebrasRequest();
+
+  const profile = carrierProfiles[carrier];
+  const lines = [
+    getValue("recipients"),
+    getValue("copyTo"),
+    "",
+    `${getValue("greeting")};`,
+    profile.emailIntro || `Estamos com ${getValue("outageText")} podem verificar com urgência?`,
+    "",
+  ];
+
+  const designations = splitLines(getValue("designations"));
+  if (designations.length) {
+    designations.forEach((item) => lines.push(`Designações:${item}`));
+  } else {
+    lines.push("Designações:");
+  }
+
+  lines.push(
+    `Trecho: ${buildRoute()}`,
+    `Horário queda: ${formatFailureTime(getValue("failureTime"))}`,
+    `Chamado Interno: ${getValue("internalTicket")}`,
+    `Contato: ${getValue("contact")}`,
+    "",
+    "Ficamos no aguardo do protocolo",
+    "",
+    "Atenciosamente",
+  );
+
+  return lines.join("\n");
+}
+
+function buildTelebrasRequest() {
+  const circuit = telebrasCircuit();
+  return [
+    `Circuito:${circuit}`,
+    `Nome completo: ${getValue("requesterName")}`,
+    "Nome da instituição: Alloha",
+    `Pessoa para contato(nome, telefone com DDD e Email): ${buildTelebrasContact()}`,
+    `Data e hora do problema: ${formatTelebrasDate(getValue("failureTime"))}`,
+  ].join("\n");
+}
+
+function buildCharge() {
+  const external = getValue("externalTicket") || getValue("internalTicket");
+  const carrier = carrierProfiles[getValue("carrier")].display;
+  const greeting = getValue("greeting");
+  const designator = external ? ` ${external}` : "";
+
+  return [
+    `${greeting}, temos alguma atualização deste chamado${designator} ?`,
+    "",
+    `${greeting}, circuito${designator} permanece indisponível.`,
+    "",
+    `${greeting} prezados temos atualizações do chamado${designator} ?`,
+    `${greeting}, ${carrier}, seguimos no aguardo de atualização do chamado${designator}.`,
+  ].join("\n");
+}
+
+function buildComplete() {
+  const blocks = [
+    buildOpening(),
+    "",
+    buildUpdate(),
+    "",
+  ];
+
+  const bdesk = getValue("bdeskTitle");
+  const ticket = getValue("internalTicket");
+  if (ticket || bdesk) blocks.push(`Aut Bdesk:# ${[ticket, bdesk].filter(Boolean).join(" - ")}`, "");
+  if (bdesk) blocks.push(bdesk, "");
+
+  const events = getValue("events");
+  if (events) blocks.push(events, "");
+
+  blocks.push(buildEmail());
+  return blocks.join("\n");
+}
+
+function renderOutput() {
+  const description = buildDescription();
+  if (description) {
+    fields.descriptionOutput.value = description;
+    fields.bdeskTitle.value = description;
+  } else {
+    fields.descriptionOutput.value = getValue("bdeskTitle");
+  }
+
+  fields.openingOutput.value = buildOpening();
+  fields.updateOutput.value = buildUpdate();
+  fields.emailOutput.value = buildEmail();
+  fields.chargeOutput.value = buildCharge();
+}
+
+function splitLines(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function firstDesignation() {
+  return splitLines(getValue("designations"))[0] || "";
+}
+
+function telebrasCircuit() {
+  const designations = getValue("designations");
+  const patx = designations.match(/PATX\d+/i);
+  if (patx) return patx[0].toUpperCase();
+
+  return firstDesignation().replace(/^CAP-DESG:/i, "");
+}
+
+function buildRoute() {
+  const origin = getValue("origin");
+  const destination = getValue("destination");
+  if (origin && destination) return `${origin} x ${destination}`;
+  return origin || destination || "";
+}
+
+function formatFailureTime(value) {
+  if (!value) return "";
+  return value.endsWith("hrs") || value.endsWith("hs") ? value : `${value}hrs`;
+}
+
+function formatTelebrasDate(value) {
+  return value.replace(/\//g, "-");
+}
+
+function buildTelebrasContact() {
+  const contact = getValue("contact");
+  const name = getValue("requesterName").split(" ")[0] || "";
+  return [name, contact].filter(Boolean).join(", ");
+}
+
+async function copyField(fieldId) {
+  const target = fields[fieldId];
+  if (!target) return;
+
+  try {
+    await navigator.clipboard.writeText(target.value);
+    setStatus("Texto copiado.");
+  } catch (error) {
+    target.select();
+    document.execCommand("copy");
+    setStatus("Texto copiado pela seleção.");
+  }
+}
+
+function downloadOutput() {
+  const carrier = getValue("carrier").toLowerCase();
+  const ticket = getValue("internalTicket") || "noc";
+  const content = [
+    "### DESCRIÇÃO BDESK ###",
+    fields.descriptionOutput.value,
+    "",
+    fields.openingOutput.value,
+    "",
+    fields.updateOutput.value,
+    "",
+    fields.emailOutput.value,
+    "",
+    "### COBRANÇA ###",
+    fields.chargeOutput.value,
+  ].join("\n");
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `carimbo-${carrier}-${ticket}.txt`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  setStatus("Arquivo .txt gerado.");
+}
+
+function clearForm() {
+  [
+    "events",
+    "internalTicket",
+    "externalTicket",
+    "designations",
+    "bdeskTitle",
+    "origin",
+    "destination",
+    "failureTime",
+    "phoneChannel",
+    "hostA",
+    "hostB",
+  ].forEach((id) => setValue(id, ""));
+
+  applyCarrierDefaults(getValue("carrier"), true);
+  setValue("failureType", "INDISPONIBILIDADE");
+  setValue("fiber", "ONLY");
+  setValue("descriptionMode", "auto");
+  renderOutput();
+  setStatus("Campos limpos.");
+}
+
+function readDefaults() {
+  try {
+    return JSON.parse(localStorage.getItem("nocGeneratorDefaults") || "{}");
+  } catch (error) {
+    return {};
+  }
+}
+
+function loadDefaults() {
+  const defaults = readDefaults();
+  if (defaults.contact) setValue("contact", defaults.contact);
+  if (defaults.requesterName) setValue("requesterName", defaults.requesterName);
+}
+
+function saveDefaults() {
+  const defaults = {
+    contact: getValue("contact"),
+    requesterName: getValue("requesterName"),
+  };
+
+  localStorage.setItem("nocGeneratorDefaults", JSON.stringify(defaults));
+  setStatus("Padrões salvos neste navegador.");
+}
+
+function setStatus(message) {
+  fields.status.textContent = message;
+}

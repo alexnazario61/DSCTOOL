@@ -526,6 +526,8 @@ function extractDesignations(text) {
     if (value.length > 3) matches.add(value);
   });
 
+  extractPipeCapacityDesignations(text).forEach((item) => matches.add(item));
+
   const patterns = [
     /CAP[_:][A-Z0-9:_./*-]+(?:CID:\d+|ID:\d+|EILD[:\-_]?\d+|DES[:A-Z0-9/_ *.-]+|DESG[:A-Z0-9/_ *.-]+)?/gi,
     /CAP-DESG:[A-Z0-9-]+/gi,
@@ -541,6 +543,26 @@ function extractDesignations(text) {
   });
 
   return Array.from(matches);
+}
+
+function extractPipeCapacityDesignations(text) {
+  const designations = [];
+  const pattern = /\b(CAP[:_][A-Z0-9]+[:_])([A-Z0-9.-]+(?:\|[A-Z0-9.-]+)+)/gi;
+  let match = pattern.exec(text);
+
+  while (match) {
+    const prefix = match[1].toUpperCase();
+    const circuits = match[2].split("|").map((item) => item.trim()).filter(Boolean);
+
+    circuits.forEach((circuit) => {
+      const normalized = circuit.toUpperCase();
+      designations.push(normalized.startsWith(prefix) ? normalized : `${prefix}${normalized}`);
+    });
+
+    match = pattern.exec(text);
+  }
+
+  return designations;
 }
 
 function extractFailureTime(text) {
